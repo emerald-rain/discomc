@@ -15,13 +15,12 @@ const STOP_TIMEOUT = 15 * 60e3;
 const START_TIMEOUT = 20 * 60e3;
 
 // State in R2
-const PANEL = "state/panel"; // { channel, message }
+const PANEL = "state/panel"; // { channel, message, origin (Worker URL, for /panel.jpg) }
 const STOP = "state/stop"; // pending stop: { at }
 const VM = "state/vm"; // written by the server: online | error: ... | saving | saved
 const NOTE = "state/note"; // last error, shown on the panel until the next click
 const LAST = "state/last"; // last drawn panel, to skip identical edits
 
-const LOCATIONS = { hel1: "Helsinki", nbg1: "Nuremberg", fsn1: "Falkenstein" };
 // Tried in order; the first one Hetzner has in stock is used.
 const CHOICES = [
   ["cx23", "hel1"],
@@ -33,8 +32,16 @@ const actions = { start, stop, remove };
 
 export default {
   async fetch(req, env, ctx) {
-    if (req.method !== "POST") return new Response(null, { status: 405 });
     const { origin, pathname } = new URL(req.url);
+
+    // Panel picture from R2 (the panel links it with ?v=etag, so a new upload shows up).
+    if (req.method === "GET" && pathname === "/panel.jpg") {
+      const obj = await env.WORLD.get(IMAGE);
+      if (!obj) return new Response(null, { status: 404 });
+      const type = obj.httpMetadata?.contentType ?? "image/jpeg";
+      return new Response(obj.body, { headers: { "content-type": type, "cache-control": "public, max-age=86400" } });
+    }
+    if (req.method !== "POST") return new Response(null, { status: 405 });
 
     // The server reports a state change. No auth needed: it only redraws from the real state.
     if (pathname === "/refresh") {
@@ -57,7 +64,7 @@ export default {
     if (interaction.type === 2) {
       const url = messageUrl(env, interaction.token);
       ctx.waitUntil(
-        postPanel(env, interaction.channel_id)
+        postPanel(env, interaction.channel_id, origin)
           .then(() => "Panel posted.", (e) => `Error: ${e.message}`)
           .then((content) => edit(url, content)),
       );
@@ -196,97 +203,90 @@ async function settle(env) {
 
 // --- Panel ------------------------------------------------------------------
 
-async function postPanel(env, channel) {
+async function postPanel(env, channel, origin) {
   const old = await json(env, PANEL);
-  const body = JSON.stringify(await view(env));
+  const body = JSON.stringify(await view(env, origin));
   const msg = await discord(env, `/channels/${channel}/messages`, { method: "POST", body });
-  await Promise.all([put(env, PANEL, JSON.stringify({ channel, message: msg.id })), put(env, LAST, body)]);
+  await Promise.all([put(env, PANEL, JSON.stringify({ channel, message: msg.id, origin })), put(env, LAST, body)]);
   if (old) await discord(env, `/channels/${old.channel}/messages/${old.message}`, { method: "DELETE" }).catch(() => {});
 }
 
 async function refresh(env) {
   const panel = await json(env, PANEL);
   if (!panel) return;
-  const body = JSON.stringify(await view(env));
+  const body = JSON.stringify(await view(env, panel.origin));
   if (body === (await get(env, LAST))) return;
   await discord(env, `/channels/${panel.channel}/messages/${panel.message}`, { method: "PATCH", body });
   await put(env, LAST, body);
 }
 
-// Panel look. Icons can be custom emoji: "<:name:id>".
-const ICONS = { offline: "⚫", starting: "🟡", online: "🟢", stopping: "🟡", problem: "🔴", note: "⚠️" };
-const COLORS = { offline: 0x747f8d, starting: 0xfaa61a, online: 0x3ba55c, stopping: 0xfaa61a, problem: 0xed4245 };
+// Panel look (mockup: discohook). Emoji can be custom: { name, id }.
+const NAME = "Шузик";
+const COLORS = { offline: 0x3498db, starting: 0xf1c40f, online: 0x2ecc71, stopping: 0xf1c40f, problem: 0xe74c3c };
+const R2_FREE = "10 GB";
+const IMAGE = "assets/panel.jpg"; // panel picture, served at /panel.jpg
 const V2 = 1 << 15; // IS_COMPONENTS_V2 message flag
 
 // Panel message for the current state: one container whose stripe color shows the state.
-// Times use Discord <t:..> tags, so they tick without edits.
-async function view(env) {
-  const [[s], objects, pending, vm, note] = await Promise.all([
+async function view(env, origin) {
+  const [[s], objects, pending, vm, note, image] = await Promise.all([
     servers(env),
     listAll(env.WORLD),
     env.WORLD.head(STOP),
     get(env, VM),
     get(env, NOTE),
+    env.WORLD.head(IMAGE),
   ]);
+  const backups = objects.filter((o) => o.key.startsWith(BACKUPS)).sort((a, b) => b.uploaded - a.uploaded);
+  const used = objects.reduce((sum, o) => sum + o.size, 0);
 
-  let state, title, lines, buttons = [];
-  const problem = (text) => {
-    [state, title, lines] = ["problem", "Problem", [text]];
+  const map = link("Live map", "🗺️", `https://${DOMAIN}`);
+  let state, problem, buttons;
+  const fail = (text) => {
+    [state, problem] = ["problem", text];
     buttons = [
-      ...(s.status === "running" ? [button("stop", "Stop and save", 1)] : []),
-      button("remove", "Delete without saving", 4),
+      ...(s.status === "running" ? [button("Stop and save", "↙️", 4, "stop")] : []),
+      button("Delete without saving", "🗑️", 2, "remove"),
     ];
   };
 
   if (!s) {
-    [state, title, lines] = ["offline", "Offline", []];
-    buttons = [button("start", "Start", 3)];
-  } else {
-    const where = `${s.server_type.name} · ${LOCATIONS[s.location.name] ?? s.location.name}`;
-    const since = `<t:${Math.floor(Date.parse(s.created) / 1000)}:R>`;
-    if (s.status === "off" && !pending) problem("Server is off but has no new backup.");
-    else if (pending || vm === "saving" || vm === "saved") {
-      [state, title] = ["stopping", "Stopping"];
-      lines = [vm === "saved" ? "World saved, powering off…" : "Saving the world…"];
-    } else if (vm?.startsWith("error")) problem(vm.replace(/^error: */, ""));
-    else if (s.status === "running" && vm === "online") {
-      [state, title] = ["online", "Online"];
-      lines = [`\`\`\`${DOMAIN}\`\`\``, `${where} · up since ${since} · ${cost(s)} so far`];
-      buttons = [button("stop", "Stop", 4)];
-    } else if (Date.now() - Date.parse(s.created) > START_TIMEOUT) problem("Not online after 20 min.");
-    else {
-      [state, title] = ["starting", "Starting"];
-      lines = [`${where} · created ${since}`, "Takes a few minutes."];
-    }
+    state = "offline";
+    const from = backups.length ? "latest" : "new world";
+    buttons = [button(`Start server [ ${from} ]`, "🌠", 3, "start"), map, link("Backup", "🫳", `https://${DOMAIN}`)];
+  } else if (s.status === "off" && !pending) fail("Server is off but has no new backup.");
+  else if (pending || vm === "saving" || vm === "saved") {
+    state = "stopping";
+    buttons = [button(`${NAME} falls asleep ...`, "💤", 1), map];
+  } else if (vm?.startsWith("error")) fail(vm.replace(/^error: */, ""));
+  else if (s.status === "running" && vm === "online") {
+    state = "online";
+    buttons = [button("Stop and backup", "↙️", 4, "stop"), map, button("Stop when idle", "✡️", 3)];
+  } else if (Date.now() - Date.parse(s.created) > START_TIMEOUT) fail("Not online after 20 min.");
+  else {
+    state = "starting";
+    buttons = [button(`${NAME} wakes up ...`, "🌟", 1), map];
   }
 
-  const backups = objects.filter((o) => o.key.startsWith(BACKUPS)).sort((a, b) => b.uploaded - a.uploaded);
-  const used = objects.reduce((sum, o) => sum + o.size, 0);
-  const last = backups[0];
-  const saves = last
-    ? `-# Last save <t:${Math.floor(last.uploaded / 1000)}:f> (${size(last.size)}) · ${backups.length} backup(s) · ${size(used)} in R2`
-    : "-# No backups yet: Start makes a fresh world.";
-
+  const seen = backups[0] ? utc(backups[0].uploaded) : "never";
+  const chips = [state.toUpperCase(), `R2: ${size(used)} / ${R2_FREE}`, `LAST TIME ONLINE: ${seen}`];
+  const warn = [problem, note].filter(Boolean).map((t) => `⚠️ ${t}`).join("\n");
   const parts = [
-    text([`## ${ICONS[state]} ${title}`, ...lines].join("\n")),
-    note && text(`${ICONS.note} ${note}`),
-    { type: 14 }, // separator
-    text(saves),
-    buttons.length && { type: 1, components: buttons },
+    text(chips.map((c) => `\` ${c} \``).join(" ")),
+    warn && text(warn),
+    image && origin && { type: 12, items: [{ media: { url: `${origin}/panel.jpg?v=${image.etag}` } }] },
+    { type: 1, components: buttons },
   ].filter(Boolean);
   return { flags: V2, components: [{ type: 17, accent_color: COLORS[state], components: parts }] };
 }
 
 const text = (content) => ({ type: 10, content });
-const button = (custom_id, label, style) => ({ type: 2, custom_id, label, style });
-
-// Hetzner bills every started hour, at the gross hourly price of the server's location.
-function cost(s) {
-  const price = s.server_type.prices?.find((p) => p.location === s.location.name)?.price_hourly.gross;
-  if (!price) return "€?";
-  const hours = Math.ceil((Date.now() - Date.parse(s.created)) / 3600e3);
-  return `€${(hours * price).toFixed(2)}`;
-}
+// A button without an action (custom_id) is drawn disabled.
+const button = (label, emoji, style, custom_id) =>
+  ({ type: 2, style, label, emoji: { name: emoji }, custom_id: custom_id ?? label, disabled: !custom_id });
+// Link buttons are disabled for now (live map and backup download are not built yet).
+const link = (label, emoji, url) => ({ type: 2, style: 5, label, emoji: { name: emoji }, url, disabled: true });
+const utc = (ms) => new Date(ms).toISOString().replace(/^(\d+)-(\d+)-(\d+)T(\d+:\d+).*/, "$3.$2.$1 $4");
 
 // --- APIs -------------------------------------------------------------------
 

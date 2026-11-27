@@ -1,7 +1,7 @@
 #cloud-config
 # First boot of the Minecraft server. The Worker sends this as Hetzner user_data
 # and fills the two base64 placeholders below: /etc/mc.env (R2 credentials, backup key,
-# Discord message URL) and docker-compose.yml.
+# Worker URL) and docker-compose.yml.
 
 packages: [docker.io, docker-cli, docker-compose, zstd, rclone, btop, micro]
 
@@ -39,15 +39,23 @@ write_files:
     encoding: b64
     content: __MC_ENV__
 
-  # Restore the world and mod configs from R2, start Minecraft, report to Discord.
+  # Tell the Worker about a state change: write state/vm in R2, then ask it to redraw the panel.
+  - path: /usr/local/bin/mc-report
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -a; . /etc/mc.env; set +a
+      printf %s "$1" | rclone rcat r2:mc-world/state/vm || true
+      curl -fsS -m 10 -X POST "$WORKER/refresh" || true
+
+  # Restore the world and mod configs from R2, start Minecraft, report to the Worker.
   - path: /usr/local/bin/mc-start
     permissions: "0755"
     content: |
       #!/bin/bash
       set -euo pipefail
       set -a; . /etc/mc.env; set +a
-      say() { curl -sS -X PATCH -H 'content-type: application/json' -d "{\"content\":\"$1\"}" "$DISCORD_MESSAGE" >/dev/null || true; }
-      trap 'say "Error: start failed at line $LINENO (journalctl -u cloud-final)"' ERR
+      trap 'mc-report "error: start failed at line $LINENO (journalctl -u cloud-final)"' ERR
 
       cd /srv/mc
       mkdir -p data config
@@ -59,10 +67,10 @@ write_files:
       docker compose up -d
 
       for _ in $(seq 180); do # 15 min
-        [ "$(docker inspect -f '{{.State.Health.Status}}' mc-server)" = healthy ] && { say "Online: mc.knash.party"; exit 0; }
+        [ "$(docker inspect -f '{{.State.Health.Status}}' mc-server)" = healthy ] && { mc-report online; exit 0; }
         sleep 5
       done
-      say "Error: Minecraft is not healthy after 15 min"
+      mc-report "error: Minecraft is not healthy after 15 min"
       exit 1
 
   # Stop Minecraft and upload the world to R2. Run by mc-backup.service on every shutdown.
@@ -74,10 +82,12 @@ write_files:
       set -a; . /etc/mc.env; set +a
       cd /srv/mc
       [ -f .restored ] || { echo "world was never restored, skipping backup"; exit 0; }
+      mc-report saving
       docker compose stop
       key="backups/$(date -u +%FT%TZ).tar.zst"
       tar -C data --exclude=world/session.lock -c world | zstd -T0 | rclone rcat "r2:mc-world/$key"
       echo "uploaded $key"
+      mc-report saved
 
   # Does nothing on boot; on shutdown runs mc-backup while docker and network are still up
   # (units stop in reverse order). Hetzner's ACPI shutdown waits for it.

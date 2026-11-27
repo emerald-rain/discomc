@@ -14,7 +14,7 @@ R2_ACCOUNT_ID = "a48fd80d5d5a24bcf34c2d4d7f4cd806"
 [observability]
 enabled = true
 
-# Finishes a pending /mc stop (see scheduled() in src/index.js)
+# Deletes powered-off servers and redraws the panel (see scheduled() in src/index.js)
 [triggers]
 crons = ["* * * * *"]
 
@@ -29,6 +29,6 @@ binding = "WORLD"
 bucket_name = "mc-world"
 
 # Worker secrets (Settings -> Variables and Secrets, type Secret):
-#   HETZNER_TOKEN, CF_DNS_TOKEN, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+#   HETZNER_TOKEN, CF_DNS_TOKEN, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, DISCORD_BOT_TOKEN
 # Optional worker var: HETZNER_SSH_KEY (name of an SSH key in Hetzner)
-# Build secret (Settings -> Build -> Variables): DISCORD_BOT_TOKEN
+# Build secret (Settings -> Build -> Variables): DISCORD_BOT_TOKEN (same value)

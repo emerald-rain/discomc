@@ -15,7 +15,7 @@ const STOP_TIMEOUT = 15 * 60e3;
 const START_TIMEOUT = 20 * 60e3;
 
 // State in R2
-const PANEL = "state/panel"; // { channel, message, origin (Worker URL, for /panel.jpg) }
+const PANEL = "state/panel"; // { channel, message }
 const STOP = "state/stop"; // pending stop: { at }
 const VM = "state/vm"; // written by the server: online | error: ... | saving | saved
 const NOTE = "state/note"; // last error, shown on the panel until the next click
@@ -34,13 +34,6 @@ export default {
   async fetch(req, env, ctx) {
     const { origin, pathname } = new URL(req.url);
 
-    // Panel picture from R2 (the panel links it with ?v=etag, so a new upload shows up).
-    if (req.method === "GET" && pathname === "/panel.jpg") {
-      const obj = await env.WORLD.get(IMAGE);
-      if (!obj) return new Response(null, { status: 404 });
-      const type = obj.httpMetadata?.contentType ?? "image/jpeg";
-      return new Response(obj.body, { headers: { "content-type": type, "cache-control": "public, max-age=86400" } });
-    }
     if (req.method !== "POST") return new Response(null, { status: 405 });
 
     // The server reports a state change. No auth needed: it only redraws from the real state.
@@ -64,7 +57,7 @@ export default {
     if (interaction.type === 2) {
       const url = messageUrl(env, interaction.token);
       ctx.waitUntil(
-        postPanel(env, interaction.channel_id, origin)
+        postPanel(env, interaction.channel_id)
           .then(() => "Panel posted.", (e) => `Error: ${e.message}`)
           .then((content) => edit(url, content)),
       );
@@ -203,18 +196,18 @@ async function settle(env) {
 
 // --- Panel ------------------------------------------------------------------
 
-async function postPanel(env, channel, origin) {
+async function postPanel(env, channel) {
   const old = await json(env, PANEL);
-  const body = JSON.stringify(await view(env, origin));
+  const body = JSON.stringify(await view(env));
   const msg = await discord(env, `/channels/${channel}/messages`, { method: "POST", body });
-  await Promise.all([put(env, PANEL, JSON.stringify({ channel, message: msg.id, origin })), put(env, LAST, body)]);
+  await Promise.all([put(env, PANEL, JSON.stringify({ channel, message: msg.id })), put(env, LAST, body)]);
   if (old) await discord(env, `/channels/${old.channel}/messages/${old.message}`, { method: "DELETE" }).catch(() => {});
 }
 
 async function refresh(env) {
   const panel = await json(env, PANEL);
   if (!panel) return;
-  const body = JSON.stringify(await view(env, panel.origin));
+  const body = JSON.stringify(await view(env));
   if (body === (await get(env, LAST))) return;
   await discord(env, `/channels/${panel.channel}/messages/${panel.message}`, { method: "PATCH", body });
   await put(env, LAST, body);
@@ -224,18 +217,21 @@ async function refresh(env) {
 const NAME = "Шузик";
 const COLORS = { offline: 0x3498db, starting: 0xf1c40f, online: 0x2ecc71, stopping: 0xf1c40f, problem: 0xe74c3c };
 const R2_FREE = "10 GB";
-const IMAGE = "assets/panel.jpg"; // panel picture, served at /panel.jpg
+const LOGO = [
+  "▐▌▗▞▘▐▌   ▗▞▀▚▖▐▛▀▚▖▐▙▖ ▐▌▗▞▀▚▖▗▞▀▀▘▐▌ ▐▌",
+  "▐▛▚▖ ▐▌   ▐▛▀▜▌▐▌ ▐▌▐▌▝▚▟▌▐▛▀▜▌ ▝▀▚▖▐▛▀▜▌",
+  "▝▘ ▝▘▝▀▀▀▘▝▘ ▝▘▝▀▀▘ ▝▘  ▝▘▝▘ ▝▘▝▀▀▘ ▝▘ ▝▘",
+].join("\n");
 const V2 = 1 << 15; // IS_COMPONENTS_V2 message flag
 
 // Panel message for the current state: one container whose stripe color shows the state.
-async function view(env, origin) {
-  const [[s], objects, pending, vm, note, image] = await Promise.all([
+async function view(env) {
+  const [[s], objects, pending, vm, note] = await Promise.all([
     servers(env),
     listAll(env.WORLD),
     env.WORLD.head(STOP),
     get(env, VM),
     get(env, NOTE),
-    env.WORLD.head(IMAGE),
   ]);
   const backups = objects.filter((o) => o.key.startsWith(BACKUPS)).sort((a, b) => b.uploaded - a.uploaded);
   const used = objects.reduce((sum, o) => sum + o.size, 0);
@@ -276,7 +272,7 @@ async function view(env, origin) {
   const parts = [
     text(chips.map((c) => `\` ${c} \``).join(" ")),
     warn && text(warn),
-    image && origin && { type: 12, items: [{ media: { url: `${origin}/panel.jpg?v=${image.etag}` } }] },
+    text("```\n" + LOGO + "\n```"),
     { type: 1, components: buttons },
   ].filter(Boolean);
   return { flags: V2, components: [{ type: 17, accent_color: COLORS[state], components: parts }] };

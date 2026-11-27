@@ -1,9 +1,10 @@
 // Registers the /mc command. Usage: node scripts/register.mjs
-// Reads .env. Without DISCORD_GUILD_ID registers globally (up to 1h to appear).
+// Runs as the Cloudflare build command; locally reads .env if present.
+// Without DISCORD_GUILD_ID registers globally (up to 1h to appear).
 
-process.loadEnvFile(new URL("../.env", import.meta.url));
+try { process.loadEnvFile(new URL("../.env", import.meta.url)); } catch {}
 const { DISCORD_APP_ID: app, DISCORD_BOT_TOKEN: token, DISCORD_GUILD_ID: guild } = process.env;
-if (!app || !token) throw new Error("DISCORD_APP_ID and DISCORD_BOT_TOKEN are required in .env");
+if (!app || !token) throw new Error("DISCORD_APP_ID and DISCORD_BOT_TOKEN are required");
 
 const sub = (name, description) => ({ type: 1, name, description });
 

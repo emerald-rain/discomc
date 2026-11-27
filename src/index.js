@@ -48,9 +48,11 @@ export default {
     const obj = await env.WORLD.get(STOP);
     if (!obj) return;
     const { url, server, at } = await obj.json();
+    console.log(`pending stop: server ${server}, ${Math.round((Date.now() - at) / 1000)}s ago`);
     const done = (content) => Promise.all([edit(url, content), env.WORLD.delete(STOP)]);
     try {
       const msg = await finishStop(env, server, at);
+      console.log(msg ?? "not off yet");
       if (msg) await done(msg);
     } catch (e) {
       await done(`Error: ${e.message}`);

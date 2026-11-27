@@ -136,15 +136,11 @@ async function remove(env) {
   await Promise.all([del(env, VM), del(env, STOP)]);
 }
 
-// First [type, location] from CHOICES that is available now (read-only API calls).
+// First [type, location] from CHOICES that Hetzner reports as available (read-only).
 async function pick(env) {
-  const [{ datacenters }, { server_types }] = await Promise.all([
-    hetzner(env, "/datacenters"),
-    hetzner(env, "/server_types?per_page=50"),
-  ]);
-  const ids = Object.fromEntries(server_types.map((t) => [t.name, t.id]));
+  const { server_types } = await hetzner(env, "/server_types?per_page=50");
   const found = CHOICES.find(([type, loc]) =>
-    datacenters.some((d) => d.location.name === loc && d.server_types.available.includes(ids[type])),
+    server_types.find((t) => t.name === type)?.locations?.some((l) => l.name === loc && l.available),
   );
   if (!found) throw new Error("No server available right now (cx23 anywhere, cpx12 in Helsinki).");
   return found;
@@ -243,9 +239,7 @@ async function view(env) {
   };
 
   if (!s) {
-    const next = await pick(env).catch(() => null);
-    [state, title] = ["offline", "Offline"];
-    lines = [next ? `Next start: ${next[0]} · ${LOCATIONS[next[1]]}` : "No server available at Hetzner right now."];
+    [state, title, lines] = ["offline", "Offline", []];
     buttons = [button("start", "Start", 3)];
   } else {
     const where = `${s.server_type.name} · ${LOCATIONS[s.location.name] ?? s.location.name}`;
@@ -274,7 +268,7 @@ async function view(env) {
     : "-# No backups yet: Start makes a fresh world.";
 
   const parts = [
-    text(`## ${ICONS[state]} ${title}\n${lines.join("\n")}`),
+    text([`## ${ICONS[state]} ${title}`, ...lines].join("\n")),
     note && text(`${ICONS.note} ${note}`),
     { type: 14 }, // separator
     text(saves),

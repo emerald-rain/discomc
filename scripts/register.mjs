@@ -5,7 +5,8 @@
 import env from "./vars.mjs";
 
 const { DISCORD_APP_ID: app, DISCORD_GUILD_ID: guild, DISCORD_BOT_TOKEN: token } = env;
-if (!app || !token) throw new Error("DISCORD_APP_ID and DISCORD_BOT_TOKEN are required");
+if (!app) throw new Error("DISCORD_APP_ID is missing (wrangler.toml [vars])");
+if (!token) throw new Error("DISCORD_BOT_TOKEN is missing (Cloudflare: Settings -> Build -> Variables and secrets)");
 
 const sub = (name, description) => ({ type: 1, name, description });
 

@@ -8,12 +8,11 @@ import compose from "../server/docker-compose.yml";
 const LABEL = "app=discomc"; // Hetzner label of our server
 const DOMAIN = "mc.knash.party";
 const BACKUPS = "backups/";
+const KEEP = 5; // backups to keep
+const STOP = "state/stop"; // pending /mc stop: { url, server, at }, finished by the cron
+const STOP_TIMEOUT = 15 * 60e3; // also the lifetime of the Discord reply token
 
-const commands = {
-  start,
-  stop: async () => "Stopping... (not wired yet)",
-  status,
-};
+const commands = { start, stop, status };
 
 export default {
   async fetch(req, env, ctx) {
@@ -42,6 +41,20 @@ export default {
         .then((content) => edit(url, content)),
     );
     return Response.json({ type: 5 }); // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+  },
+
+  // Every minute: finish a pending /mc stop once the server has powered off.
+  async scheduled(_, env) {
+    const obj = await env.WORLD.get(STOP);
+    if (!obj) return;
+    const { url, server, at } = await obj.json();
+    const done = (content) => Promise.all([edit(url, content), env.WORLD.delete(STOP)]);
+    try {
+      const msg = await finishStop(env, server, at);
+      if (msg) await done(msg);
+    } catch (e) {
+      await done(`Error: ${e.message}`);
+    }
   },
 };
 
@@ -79,6 +92,36 @@ async function start(env, { type = "cx23", location = "hel1" }, url) {
 
   const world = backup ? `restoring \`${backup.key}\` (${size(backup.size)})` : "fresh world";
   return `Starting ${type} in ${location}, ${world}... This message updates when the server is online.`;
+}
+
+// ACPI shutdown; the server backs itself up while shutting down (mc-backup.service).
+async function stop(env, _, url) {
+  const { servers } = await hetzner(env, `/servers?label_selector=${LABEL}`);
+  const s = servers[0];
+  if (!s) return "No server is running.";
+  if (await env.WORLD.head(STOP)) return "Already stopping.";
+
+  await env.WORLD.put(STOP, JSON.stringify({ url, server: s.id, at: Date.now() }));
+  if (s.status !== "off") await hetzner(env, `/servers/${s.id}/actions/shutdown`, { method: "POST" });
+  return "Stopping: saving the world to R2... This message updates when done.";
+}
+
+// Returns the final message, or nothing to check again next minute.
+async function finishStop(env, id, at) {
+  const { server } = await hetzner(env, `/servers/${id}`);
+  if (server.status !== "off") {
+    if (Date.now() - at > STOP_TIMEOUT) return `Error: server is still ${server.status} after 15 min.`;
+    return;
+  }
+
+  const backups = (await listAll(env.WORLD, BACKUPS)).sort((a, b) => b.uploaded - a.uploaded);
+  const fresh = backups[0]?.uploaded > at && backups[0];
+  if (!fresh) return "Error: server is off but no new backup in R2. Server kept, check it.";
+
+  await hetzner(env, `/servers/${id}`, { method: "DELETE" });
+  const old = backups.slice(KEEP).map((o) => o.key);
+  if (old.length) await env.WORLD.delete(old);
+  return `Saved \`${fresh.key}\` (${size(fresh.size)}). Server deleted.`;
 }
 
 async function status(env) {

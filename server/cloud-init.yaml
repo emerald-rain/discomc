@@ -55,6 +55,7 @@ write_files:
       [ -z "$BACKUP" ] || rclone cat "r2:mc-world/$BACKUP" | zstd -d | tar -x -C data
       rm -f data/world/session.lock
       chown -R 1000:1000 .
+      touch .restored # mc-backup only runs after a complete restore
       docker compose up -d
 
       for _ in $(seq 180); do # 15 min
@@ -64,6 +65,40 @@ write_files:
       say "Error: Minecraft is not healthy after 15 min"
       exit 1
 
+  # Stop Minecraft and upload the world to R2. Run by mc-backup.service on every shutdown.
+  - path: /usr/local/bin/mc-backup
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      set -a; . /etc/mc.env; set +a
+      cd /srv/mc
+      [ -f .restored ] || { echo "world was never restored, skipping backup"; exit 0; }
+      docker compose stop
+      key="backups/$(date -u +%FT%TZ).tar.zst"
+      tar -C data --exclude=world/session.lock -c world | zstd -T0 | rclone rcat "r2:mc-world/$key"
+      echo "uploaded $key"
+
+  # Does nothing on boot; on shutdown runs mc-backup while docker and network are still up
+  # (units stop in reverse order). Hetzner's ACPI shutdown waits for it.
+  - path: /etc/systemd/system/mc-backup.service
+    content: |
+      [Unit]
+      Description=Back up the Minecraft world to R2 on shutdown
+      Wants=network-online.target
+      After=network-online.target docker.service
+      Requires=docker.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/true
+      ExecStop=/usr/local/bin/mc-backup
+      TimeoutStopSec=30min
+
+      [Install]
+      WantedBy=multi-user.target
+
   - path: /srv/mc/docker-compose.yml # server/docker-compose.yml
     encoding: b64
     content: __COMPOSE__
@@ -71,4 +106,5 @@ write_files:
 runcmd:
   - [systemctl, reload, ssh]
   - [sysctl, --system]
+  - [systemctl, enable, --now, mc-backup]
   - [/usr/local/bin/mc-start]

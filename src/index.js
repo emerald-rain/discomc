@@ -217,7 +217,13 @@ async function refresh(env) {
   await put(env, LAST, body);
 }
 
-// Panel message (content + components) for the current state.
+// Panel look. Icons can be custom emoji: "<:name:id>".
+const ICONS = { offline: "⚫", starting: "🟡", online: "🟢", stopping: "🟡", problem: "🔴", note: "⚠️" };
+const COLORS = { offline: 0x747f8d, starting: 0xfaa61a, online: 0x3ba55c, stopping: 0xfaa61a, problem: 0xed4245 };
+const V2 = 1 << 15; // IS_COMPONENTS_V2 message flag
+
+// Panel message for the current state: one container whose stripe color shows the state.
+// Times use Discord <t:..> tags, so they tick without edits.
 async function view(env) {
   const [[s], objects, pending, vm, note] = await Promise.all([
     servers(env),
@@ -227,43 +233,66 @@ async function view(env) {
     get(env, NOTE),
   ]);
 
-  let line;
-  let buttons = [];
+  let state, title, lines, buttons = [];
   const problem = (text) => {
-    line = `🔴 **Problem:** ${text}`;
+    [state, title, lines] = ["problem", "Problem", [text]];
     buttons = [
       ...(s.status === "running" ? [button("stop", "Stop and save", 1)] : []),
       button("remove", "Delete without saving", 4),
     ];
   };
-  const where = s && `${s.server_type.name}, ${LOCATIONS[s.location.name] ?? s.location.name}`;
 
   if (!s) {
-    line = "⚫ **Offline**";
+    const next = await pick(env).catch(() => null);
+    [state, title] = ["offline", "Offline"];
+    lines = [next ? `Next start: ${next[0]} · ${LOCATIONS[next[1]]}` : "No server available at Hetzner right now."];
     buttons = [button("start", "Start", 3)];
-  } else if (s.status === "off" && !pending) problem("server is off but has no new backup.");
-  else if (pending || vm === "saving" || vm === "saved") {
-    line = `🟡 **Stopping…** ${vm === "saved" ? "world saved, powering off" : "saving the world"}`;
-  } else if (vm?.startsWith("error")) problem(vm.replace(/^error: */, ""));
-  else if (s.status === "running" && vm === "online") {
-    line = `🟢 **Online** — \`${DOMAIN}\` (${where})`;
-    buttons = [button("stop", "Stop", 4)];
-  } else if (Date.now() - Date.parse(s.created) > START_TIMEOUT) problem("not online after 20 min.");
-  else line = `🟡 **Starting…** ${where}, takes a few minutes`;
+  } else {
+    const where = `${s.server_type.name} · ${LOCATIONS[s.location.name] ?? s.location.name}`;
+    const since = `<t:${Math.floor(Date.parse(s.created) / 1000)}:R>`;
+    if (s.status === "off" && !pending) problem("Server is off but has no new backup.");
+    else if (pending || vm === "saving" || vm === "saved") {
+      [state, title] = ["stopping", "Stopping"];
+      lines = [vm === "saved" ? "World saved, powering off…" : "Saving the world…"];
+    } else if (vm?.startsWith("error")) problem(vm.replace(/^error: */, ""));
+    else if (s.status === "running" && vm === "online") {
+      [state, title] = ["online", "Online"];
+      lines = [`\`\`\`${DOMAIN}\`\`\``, `${where} · up since ${since} · ${cost(s)} so far`];
+      buttons = [button("stop", "Stop", 4)];
+    } else if (Date.now() - Date.parse(s.created) > START_TIMEOUT) problem("Not online after 20 min.");
+    else {
+      [state, title] = ["starting", "Starting"];
+      lines = [`${where} · created ${since}`, "Takes a few minutes."];
+    }
+  }
 
   const backups = objects.filter((o) => o.key.startsWith(BACKUPS)).sort((a, b) => b.uploaded - a.uploaded);
   const used = objects.reduce((sum, o) => sum + o.size, 0);
   const last = backups[0];
-  const info = last
-    ? `Last save: <t:${Math.floor(last.uploaded / 1000)}:f> (${size(last.size)}) · ${backups.length} backup(s), ${size(used)} in R2`
-    : "No backups yet: Start makes a fresh world.";
+  const saves = last
+    ? `-# Last save <t:${Math.floor(last.uploaded / 1000)}:f> (${size(last.size)}) · ${backups.length} backup(s) · ${size(used)} in R2`
+    : "-# No backups yet: Start makes a fresh world.";
 
-  const rows = [];
-  if (buttons.length) rows.push({ type: 1, components: buttons });
-  return { content: [line, info, note && `⚠️ ${note}`].filter(Boolean).join("\n"), components: rows };
+  const parts = [
+    text(`## ${ICONS[state]} ${title}\n${lines.join("\n")}`),
+    note && text(`${ICONS.note} ${note}`),
+    { type: 14 }, // separator
+    text(saves),
+    buttons.length && { type: 1, components: buttons },
+  ].filter(Boolean);
+  return { flags: V2, components: [{ type: 17, accent_color: COLORS[state], components: parts }] };
 }
 
+const text = (content) => ({ type: 10, content });
 const button = (custom_id, label, style) => ({ type: 2, custom_id, label, style });
+
+// Hetzner bills every started hour, at the gross hourly price of the server's location.
+function cost(s) {
+  const price = s.server_type.prices?.find((p) => p.location === s.location.name)?.price_hourly.gross;
+  if (!price) return "€?";
+  const hours = Math.ceil((Date.now() - Date.parse(s.created)) / 3600e3);
+  return `€${(hours * price).toFixed(2)}`;
+}
 
 // --- APIs -------------------------------------------------------------------
 

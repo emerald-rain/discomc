@@ -269,7 +269,9 @@ async function view(env, origin) {
   }
 
   const seen = backups[0] ? utc(backups[0].uploaded) : "never";
-  const chips = [state.toUpperCase(), `R2: ${size(used)} / ${R2_FREE}`, `LAST TIME ONLINE: ${seen}`];
+  // Fixed-length chips (monospace), so the text line is as wide in every state.
+  // Discord has no width setting: the card is as wide as its widest line.
+  const chips = [pad(state.toUpperCase(), 8), `R2: ${(used / 1e9).toFixed(2)} GB / ${R2_FREE}`, `LAST TIME ONLINE: ${seen}`];
   const warn = [problem, note].filter(Boolean).map((t) => `⚠️ ${t}`).join("\n");
   const parts = [
     text(chips.map((c) => `\` ${c} \``).join(" ")),
@@ -286,6 +288,7 @@ const button = (label, emoji, style, custom_id) =>
   ({ type: 2, style, label, emoji: { name: emoji }, custom_id: custom_id ?? label, disabled: !custom_id });
 // Link buttons are disabled for now (live map and backup download are not built yet).
 const link = (label, emoji, url) => ({ type: 2, style: 5, label, emoji: { name: emoji }, url, disabled: true });
+const pad = (s, n) => s.padEnd(n, "\u00a0"); // no-break spaces are not collapsed
 const utc = (ms) => new Date(ms).toISOString().replace(/^(\d+)-(\d+)-(\d+)T(\d+:\d+).*/, "$3.$2.$1 $4");
 
 // --- APIs -------------------------------------------------------------------

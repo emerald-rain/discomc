@@ -70,7 +70,7 @@ write_files:
         [ "$(docker inspect -f '{{.State.Health.Status}}' mc-server)" = healthy ] && { mc-report online; exit 0; }
         sleep 5
       done
-      mc-report "error: Minecraft is not healthy after 15 min"
+      mc-report "error: Minecraft not healthy 15 min after start (docker logs mc-server)"
       exit 1
 
   # Stop Minecraft and upload the world to R2. Run by mc-backup.service on every shutdown.

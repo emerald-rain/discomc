@@ -142,7 +142,7 @@ async function pick(env) {
   const found = CHOICES.find(([type, loc]) =>
     server_types.find((t) => t.name === type)?.locations?.some((l) => l.name === loc && l.available),
   );
-  if (!found) throw new Error("No server available right now (cx23 anywhere, cpx12 in Helsinki).");
+  if (!found) throw new Error("No free server: cx23 (hel1, nbg1, fsn1) and cpx12 (hel1) are all unavailable.");
   return found;
 }
 
@@ -176,7 +176,7 @@ async function tick(env) {
 
 async function finish(env, s, at) {
   const backups = (await listAll(env.WORLD, BACKUPS)).sort((a, b) => b.uploaded - a.uploaded);
-  if (!(backups[0]?.uploaded > at)) throw new Error("Server is off but there is no new backup in R2. Server kept.");
+  if (!(backups[0]?.uploaded > at)) return; // the panel shows this as a problem
 
   await hetzner(env, `/servers/${s.id}`, { method: "DELETE" });
   const old = backups.slice(KEEP).map((o) => o.key);
@@ -241,24 +241,23 @@ async function view(env) {
   const fail = (text) => {
     [state, problem] = ["problem", text];
     buttons = [
-      ...(s.status === "running" ? [button("Stop and save", "↙️", 4, "stop")] : []),
+      ...(s.status === "running" ? [button("Stop and save", "⏹️", 4, "stop")] : []),
       button("Delete without saving", "🗑️", 2, "remove"),
     ];
   };
 
   if (!s) {
     state = "offline";
-    const from = backups.length ? "latest" : "new world";
-    buttons = [button(`Start server [ ${from} ]`, "🌠", 3, "start"), map, link("Backup", "🫳", `https://${DOMAIN}`)];
-  } else if (s.status === "off" && !pending) fail("Server is off but has no new backup.");
+    buttons = [button(`Wake up ${NAME}`, "🌠", 3, "start"), map, link("Backup", "🫳", `https://${DOMAIN}`)];
+  } else if (s.status === "off" && !pending) fail("Server is off, no new backup in R2. Server kept.");
   else if (pending || vm === "saving" || vm === "saved") {
     state = "stopping";
     buttons = [button(`${NAME} falls asleep ...`, "💤", 1), map];
   } else if (vm?.startsWith("error")) fail(vm.replace(/^error: */, ""));
   else if (s.status === "running" && vm === "online") {
     state = "online";
-    buttons = [button("Stop and backup", "↙️", 4, "stop"), map, button("Stop when idle", "✡️", 3)];
-  } else if (Date.now() - Date.parse(s.created) > START_TIMEOUT) fail("Not online after 20 min.");
+    buttons = [button("Stop and save", "⏹️", 4, "stop"), map, button("Stop when idle", "⏳", 3)];
+  } else if (Date.now() - Date.parse(s.created) > START_TIMEOUT) fail("Not online 20 min after start (no \"online\" report from the server).");
   else {
     state = "starting";
     buttons = [button(`${NAME} wakes up ...`, "🌟", 1), map];
@@ -267,7 +266,7 @@ async function view(env) {
   const seen = backups[0] ? utc(backups[0].uploaded) : "never";
   // Fixed-length chips (monospace), so the text line is as wide in every state.
   // Discord has no width setting: the card is as wide as its widest line.
-  const chips = [pad(state.toUpperCase(), 8), `R2: ${(used / 1e9).toFixed(2)} GB / ${R2_FREE}`, `LAST TIME ONLINE: ${seen}`];
+  const chips = [pad(state.toUpperCase(), 8), `R2: ${(used / 1e9).toFixed(2)} GB / ${R2_FREE}`, `LAST SAVE: ${seen}`];
   const warn = [problem, note].filter(Boolean).map((t) => `⚠️ ${t}`).join("\n");
   const parts = [
     text(chips.map((c) => `\` ${c} \``).join(" ")),
@@ -285,7 +284,7 @@ const button = (label, emoji, style, custom_id) =>
 // Link buttons are disabled for now (live map and backup download are not built yet).
 const link = (label, emoji, url) => ({ type: 2, style: 5, label, emoji: { name: emoji }, url, disabled: true });
 const pad = (s, n) => s.padEnd(n, "\u00a0"); // no-break spaces are not collapsed
-const utc = (ms) => new Date(ms).toISOString().replace(/^(\d+)-(\d+)-(\d+)T(\d+:\d+).*/, "$3.$2.$1 $4");
+const utc = (ms) => new Date(ms).toISOString().replace(/^(\d+)-(\d+)-(\d+)T(\d+:\d+).*/, "$3.$2.$1 $4 UTC");
 
 // --- APIs -------------------------------------------------------------------
 

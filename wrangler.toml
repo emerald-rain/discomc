@@ -8,4 +8,9 @@ DISCORD_PUBLIC_KEY = "b566aa0b8991891c94c21d5d2fe1fce6e2dabc5cedbe6c19cdf4e95f60
 DISCORD_APP_ID = "1442874755932884992"
 DISCORD_GUILD_ID = "1058005724199923763"
 
+[[r2_buckets]]
+binding = "WORLD"
+bucket_name = "mc-world"
+
+# Worker secret (Settings -> Variables and Secrets, type Secret): HETZNER_TOKEN
 # Build secret (Settings -> Build -> Variables): DISCORD_BOT_TOKEN

@@ -1,5 +1,6 @@
 // Local dev: plain Node HTTP server in front of the Worker + cloudflared quick tunnel.
 // Usage: node scripts/dev.mjs  (needs cloudflared in PATH or $CLOUDFLARED)
+// No R2 binding locally: commands touching env.WORLD will report an error.
 // Paste the printed trycloudflare.com URL into
 // Discord Developer Portal -> General Information -> Interactions Endpoint URL.
 
@@ -19,7 +20,7 @@ createServer(async (req, res) => {
     body: chunks.length ? Buffer.concat(chunks) : undefined,
   });
   try {
-    const r = await worker.fetch(request, env);
+    const r = await worker.fetch(request, env, { waitUntil: (p) => p.catch(console.error) });
     res.writeHead(r.status, Object.fromEntries(r.headers));
     res.end(Buffer.from(await r.arrayBuffer()));
   } catch (err) {

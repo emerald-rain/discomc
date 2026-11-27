@@ -15,15 +15,21 @@ const STOP_TIMEOUT = 15 * 60e3;
 const START_TIMEOUT = 20 * 60e3;
 
 // State in R2
-const PANEL = "state/panel"; // { channel, message, type, location }
+const PANEL = "state/panel"; // { channel, message }
 const STOP = "state/stop"; // pending stop: { at }
 const VM = "state/vm"; // written by the server: online | error: ... | saving | saved
 const NOTE = "state/note"; // last error, shown on the panel until the next click
 const LAST = "state/last"; // last drawn panel, to skip identical edits
 
-const TYPES = { cx23: "cx23", cpx12: "cpx12" };
 const LOCATIONS = { hel1: "Helsinki", nbg1: "Nuremberg", fsn1: "Falkenstein" };
-const actions = { start, stop, remove, type: choose, location: choose };
+// Tried in order; the first one Hetzner has in stock is used.
+const CHOICES = [
+  ["cx23", "hel1"],
+  ["cx23", "nbg1"],
+  ["cx23", "fsn1"],
+  ["cpx12", "hel1"],
+];
+const actions = { start, stop, remove };
 
 export default {
   async fetch(req, env, ctx) {
@@ -58,12 +64,12 @@ export default {
       return Response.json({ type: 5, data: { flags: 64 } }); // deferred, ephemeral
     }
 
-    // Button or select on the panel.
+    // Button on the panel.
     if (interaction.type === 3) {
-      const { custom_id: id, values } = interaction.data;
+      const id = interaction.data.custom_id;
       ctx.waitUntil(
         del(env, NOTE)
-          .then(() => actions[id]?.(env, { id, value: values?.[0], origin }))
+          .then(() => actions[id]?.(env, { origin }))
           .catch((e) => put(env, NOTE, e.message))
           .then(() => refresh(env))
           .catch(console.error),
@@ -84,7 +90,7 @@ export default {
 
 async function start(env, { origin }) {
   if ((await servers(env)).length) throw new Error("Server already exists.");
-  const { type = "cx23", location = "hel1" } = (await json(env, PANEL)) ?? {};
+  const [type, location] = await pick(env);
   await del(env, VM);
 
   const backup = latest(await listAll(env.WORLD, BACKUPS));
@@ -130,11 +136,18 @@ async function remove(env) {
   await Promise.all([del(env, VM), del(env, STOP)]);
 }
 
-// Server type / location select.
-async function choose(env, { id, value }) {
-  const panel = await json(env, PANEL);
-  const options = id === "type" ? TYPES : LOCATIONS;
-  if (panel && value in options) await put(env, PANEL, JSON.stringify({ ...panel, [id]: value }));
+// First [type, location] from CHOICES that is available now (read-only API calls).
+async function pick(env) {
+  const [{ datacenters }, { server_types }] = await Promise.all([
+    hetzner(env, "/datacenters"),
+    hetzner(env, "/server_types?per_page=50"),
+  ]);
+  const ids = Object.fromEntries(server_types.map((t) => [t.name, t.id]));
+  const found = CHOICES.find(([type, loc]) =>
+    datacenters.some((d) => d.location.name === loc && d.server_types.available.includes(ids[type])),
+  );
+  if (!found) throw new Error("No server available right now (cx23 anywhere, cpx12 in Helsinki).");
+  return found;
 }
 
 // --- Stop handling ----------------------------------------------------------
@@ -189,24 +202,23 @@ async function settle(env) {
 
 async function postPanel(env, channel) {
   const old = await json(env, PANEL);
-  const panel = { channel, type: old?.type ?? "cx23", location: old?.location ?? "hel1" };
-  const body = JSON.stringify(await view(env, panel));
+  const body = JSON.stringify(await view(env));
   const msg = await discord(env, `/channels/${channel}/messages`, { method: "POST", body });
-  await Promise.all([put(env, PANEL, JSON.stringify({ ...panel, message: msg.id })), put(env, LAST, body)]);
+  await Promise.all([put(env, PANEL, JSON.stringify({ channel, message: msg.id })), put(env, LAST, body)]);
   if (old) await discord(env, `/channels/${old.channel}/messages/${old.message}`, { method: "DELETE" }).catch(() => {});
 }
 
 async function refresh(env) {
   const panel = await json(env, PANEL);
   if (!panel) return;
-  const body = JSON.stringify(await view(env, panel));
+  const body = JSON.stringify(await view(env));
   if (body === (await get(env, LAST))) return;
   await discord(env, `/channels/${panel.channel}/messages/${panel.message}`, { method: "PATCH", body });
   await put(env, LAST, body);
 }
 
 // Panel message (content + components) for the current state.
-async function view(env, panel) {
+async function view(env) {
   const [[s], objects, pending, vm, note] = await Promise.all([
     servers(env),
     listAll(env.WORLD),
@@ -247,22 +259,11 @@ async function view(env, panel) {
     : "No backups yet: Start makes a fresh world.";
 
   const rows = [];
-  if (!s) rows.push(select("type", TYPES, panel.type), select("location", LOCATIONS, panel.location));
   if (buttons.length) rows.push({ type: 1, components: buttons });
   return { content: [line, info, note && `⚠️ ${note}`].filter(Boolean).join("\n"), components: rows };
 }
 
 const button = (custom_id, label, style) => ({ type: 2, custom_id, label, style });
-const select = (custom_id, options, current) => ({
-  type: 1,
-  components: [
-    {
-      type: 3,
-      custom_id,
-      options: Object.entries(options).map(([value, label]) => ({ label, value, default: value === current })),
-    },
-  ],
-});
 
 // --- APIs -------------------------------------------------------------------
 

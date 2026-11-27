@@ -136,7 +136,7 @@ async function status(env) {
   const server = !s
     ? "offline"
     : s.status === "running"
-      ? `online — ${s.public_net.ipv4.ip} (${s.server_type.name}, ${s.datacenter.location.name})`
+      ? `online — ${s.public_net.ipv4.ip} (${s.server_type.name}, ${s.location.name})`
       : s.status; // initializing, starting, stopping, off, ...
 
   const used = objects.reduce((sum, o) => sum + o.size, 0);

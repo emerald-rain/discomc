@@ -1,16 +1,10 @@
-// Registers the /mc command. Usage: node scripts/register.mjs
-// Runs as the Cloudflare build command; locally reads .env if present.
+// Registers the /mc command. Runs as the Cloudflare build command.
+// Locally: DISCORD_BOT_TOKEN=... node scripts/register.mjs
 // Without DISCORD_GUILD_ID registers globally (up to 1h to appear).
 
-import { readFileSync } from "node:fs";
+import env from "./vars.mjs";
 
-try { process.loadEnvFile(new URL("../.env", import.meta.url)); } catch {}
-// Fallback: non-secret IDs from [vars] in wrangler.toml.
-const toml = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
-const fromToml = (k) => toml.match(new RegExp(`^${k}\\s*=\\s*"([^"]*)"`, "m"))?.[1];
-const app = process.env.DISCORD_APP_ID ?? fromToml("DISCORD_APP_ID");
-const guild = process.env.DISCORD_GUILD_ID ?? fromToml("DISCORD_GUILD_ID");
-const token = process.env.DISCORD_BOT_TOKEN;
+const { DISCORD_APP_ID: app, DISCORD_GUILD_ID: guild, DISCORD_BOT_TOKEN: token } = env;
 if (!app || !token) throw new Error("DISCORD_APP_ID and DISCORD_BOT_TOKEN are required");
 
 const sub = (name, description) => ({ type: 1, name, description });

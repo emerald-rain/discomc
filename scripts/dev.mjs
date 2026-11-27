@@ -1,16 +1,14 @@
 // Local dev: plain Node HTTP server in front of the Worker + cloudflared quick tunnel.
-// Usage: node scripts/dev.mjs  (reads .env; needs cloudflared in PATH or $CLOUDFLARED)
+// Usage: node scripts/dev.mjs  (needs cloudflared in PATH or $CLOUDFLARED)
 // Paste the printed trycloudflare.com URL into
 // Discord Developer Portal -> General Information -> Interactions Endpoint URL.
 
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import worker from "../src/index.js";
+import env from "./vars.mjs";
 
-process.loadEnvFile(new URL("../.env", import.meta.url));
-const env = { DISCORD_PUBLIC_KEY: process.env.DISCORD_PUBLIC_KEY };
-if (!env.DISCORD_PUBLIC_KEY) throw new Error("DISCORD_PUBLIC_KEY is required in .env");
-const port = Number(process.env.PORT ?? 8787);
+const port = Number(env.PORT ?? 8787);
 
 createServer(async (req, res) => {
   const chunks = [];

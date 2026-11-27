@@ -3,6 +3,7 @@
 // in ctx.waitUntil and edits that reply. Long work runs on the server itself.
 
 import cloudInit from "../server/cloud-init.yaml";
+import compose from "../server/docker-compose.yml";
 
 const LABEL = "app=discomc"; // Hetzner label of our server
 const DOMAIN = "mc.knash.party";
@@ -71,7 +72,7 @@ async function start(env, { type = "cx23", location = "hel1" }, url) {
       image: "debian-13",
       labels: { app: "discomc" },
       ssh_keys: env.HETZNER_SSH_KEY ? [env.HETZNER_SSH_KEY] : [], // a key here avoids the root password email
-      user_data: cloudInit.replace("__MC_ENV__", b64(mcEnv + "\n")),
+      user_data: cloudInit.replace("__MC_ENV__", b64(mcEnv + "\n")).replace("__COMPOSE__", b64(compose)),
     }),
   });
   await setDns(env, server.public_net.ipv4.ip);

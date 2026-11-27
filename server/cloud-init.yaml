@@ -1,9 +1,8 @@
 #cloud-config
 # First boot of the Minecraft server. The Worker sends this as Hetzner user_data
-# and fills the /etc/mc.env placeholder below (base64: R2 credentials, backup key,
-# Discord message URL). Everything the server needs is in this file.
+# and fills the two base64 placeholders below: /etc/mc.env (R2 credentials, backup key,
+# Discord message URL) and docker-compose.yml.
 
-package_update: true
 packages: [docker.io, docker-cli, docker-compose, zstd, rclone, btop, micro]
 
 # --- User and SSH: key-only login as malysh (uid 1000, same as itzg) ---------
@@ -40,7 +39,7 @@ write_files:
     encoding: b64
     content: __MC_ENV__
 
-  # Restore the world from R2, start Minecraft, report to Discord.
+  # Restore the world and mod configs from R2, start Minecraft, report to Discord.
   - path: /usr/local/bin/mc-start
     permissions: "0755"
     content: |
@@ -52,6 +51,7 @@ write_files:
 
       cd /srv/mc
       mkdir -p data config
+      rclone copy r2:mc-world/config config # mod configs
       [ -z "$BACKUP" ] || rclone cat "r2:mc-world/$BACKUP" | zstd -d | tar -x -C data
       rm -f data/world/session.lock
       chown -R 1000:1000 .
@@ -64,47 +64,9 @@ write_files:
       say "Error: Minecraft is not healthy after 15 min"
       exit 1
 
-  - path: /srv/mc/docker-compose.yml
-    content: |
-      services:
-        mc-server:
-          container_name: mc-server
-          image: itzg/minecraft-server:latest
-          ports: ["25565:25565"]
-          restart: unless-stopped
-          stop_grace_period: 60s
-          volumes:
-            - ./data:/data
-            - ./config:/config:ro # mod configs, empty for now
-          environment:
-            TYPE: "FABRIC"
-            VERSION: "26.3"
-            MEMORY: "80%"
-            EULA: "TRUE"
-
-            OPS: |
-              sir_malysh07
-            WHITELIST: |
-              sir_malysh07
-              sir_malysh05
-              _SUDR_
-            EXISTING_OPS_FILE: "SYNCHRONIZE"
-            EXISTING_WHITELIST_FILE: "SYNCHRONIZE"
-
-            DIFFICULTY: "hard"
-            VIEW_DISTANCE: "12"
-            SIMULATION_DISTANCE: "6"
-            SPAWN_PROTECTION: "0"
-            SYNC_CHUNK_WRITES: "false"
-            MOTD: "§6KLADNASH IMMORTAL §8v:2§r\n§5Lovely❣ §6☀§r Vanilla+§8  v:26.3"
-
-            MODRINTH_PROJECTS: |
-              fabric-api:0.165.0+26.3
-              lithium:mc26.3-0.26.3-fabric
-              ferrite-core:9.0.0-fabric
-              chunky:1.5.3
-              quickleafdecay:1.0.0
-              nocroptrample:1.6-26.3
+  - path: /srv/mc/docker-compose.yml # server/docker-compose.yml
+    encoding: b64
+    content: __COMPOSE__
 
 runcmd:
   - [systemctl, reload, ssh]

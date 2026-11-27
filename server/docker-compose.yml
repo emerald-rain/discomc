@@ -1,0 +1,43 @@
+# Minecraft server. Sent to the VM inside cloud-init by the Worker.
+services:
+  mc-server:
+    container_name: mc-server
+    image: itzg/minecraft-server:latest
+    ports: ["25565:25565"]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    volumes:
+      - ./data:/data
+      - ./config:/config:ro
+    environment:
+      TYPE: "FABRIC"
+      VERSION: "26.3"
+      MEMORY: "80%"
+      EULA: "TRUE"
+
+      OPS: |
+        sir_malysh07
+      WHITELIST: |
+        sir_malysh02
+        sir_malysh04
+        sir_malysh05
+        sir_malysh07
+        sir_malysh08
+        _SUDR_
+      EXISTING_OPS_FILE: "SYNCHRONIZE"
+      EXISTING_WHITELIST_FILE: "SYNCHRONIZE"
+
+      DIFFICULTY: "hard"
+      VIEW_DISTANCE: "12"
+      SIMULATION_DISTANCE: "6"
+      SPAWN_PROTECTION: "0"
+      SYNC_CHUNK_WRITES: "false"
+      MOTD: "§6KLADNASH IMMORTAL §8v:2§r\n§5Lovely❣ §6☀§r Vanilla+§8  v:26.3"
+
+      MODRINTH_PROJECTS: |
+        fabric-api:0.165.0+26.3
+        lithium:mc26.3-0.26.3-fabric
+        ferrite-core:9.0.0-fabric
+        chunky:1.5.3
+        quickleafdecay:1.0.0
+        nocroptrample:1.6-26.3

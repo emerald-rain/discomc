@@ -10,10 +10,10 @@ import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import env from "./vars.mjs";
 
-// Import *.yaml as a string, like wrangler's Text rule.
+// Import *.yaml/*.yml as a string, like wrangler's Text rule.
 registerHooks({
   load: (url, ctx, next) =>
-    url.endsWith(".yaml")
+    /\.ya?ml$/.test(url)
       ? { format: "module", shortCircuit: true, source: `export default ${JSON.stringify(readFileSync(new URL(url), "utf8"))};` }
       : next(url, ctx),
 });

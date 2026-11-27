@@ -10,10 +10,10 @@ DISCORD_GUILD_ID = "1058005724199923763"
 CF_ZONE_ID = "4f4aafee57eea83021328ba6eeb9241d"
 R2_ACCOUNT_ID = "" # TODO: Cloudflare Account ID
 
-# server/cloud-init.yaml is imported by the Worker as a string
+# server/*.yaml|yml are imported by the Worker as strings
 [[rules]]
 type = "Text"
-globs = ["**/*.yaml"]
+globs = ["**/*.yaml", "**/*.yml"]
 fallthrough = true
 
 [[r2_buckets]]

@@ -8,7 +8,7 @@ DISCORD_PUBLIC_KEY = "b566aa0b8991891c94c21d5d2fe1fce6e2dabc5cedbe6c19cdf4e95f60
 DISCORD_APP_ID = "1442874755932884992"
 DISCORD_GUILD_ID = "1058005724199923763"
 CF_ZONE_ID = "4f4aafee57eea83021328ba6eeb9241d"
-R2_ACCOUNT_ID = "" # TODO: Cloudflare Account ID
+R2_ACCOUNT_ID = "a48fd80d5d5a24bcf34c2d4d7f4cd806"
 
 # server/*.yaml|yml are imported by the Worker as strings
 [[rules]]

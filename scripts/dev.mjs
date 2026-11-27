@@ -6,8 +6,18 @@
 
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
-import worker from "../src/index.js";
+import { readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import env from "./vars.mjs";
+
+// Import *.yaml as a string, like wrangler's Text rule.
+registerHooks({
+  load: (url, ctx, next) =>
+    url.endsWith(".yaml")
+      ? { format: "module", shortCircuit: true, source: `export default ${JSON.stringify(readFileSync(new URL(url), "utf8"))};` }
+      : next(url, ctx),
+});
+const { default: worker } = await import("../src/index.js");
 
 const port = Number(env.PORT ?? 8787);
 

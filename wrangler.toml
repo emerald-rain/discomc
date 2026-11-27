@@ -7,10 +7,20 @@ compatibility_date = "2025-11-01"
 DISCORD_PUBLIC_KEY = "b566aa0b8991891c94c21d5d2fe1fce6e2dabc5cedbe6c19cdf4e95f607a777f"
 DISCORD_APP_ID = "1442874755932884992"
 DISCORD_GUILD_ID = "1058005724199923763"
+CF_ZONE_ID = "4f4aafee57eea83021328ba6eeb9241d"
+R2_ACCOUNT_ID = "" # TODO: Cloudflare Account ID
+
+# server/cloud-init.yaml is imported by the Worker as a string
+[[rules]]
+type = "Text"
+globs = ["**/*.yaml"]
+fallthrough = true
 
 [[r2_buckets]]
 binding = "WORLD"
 bucket_name = "mc-world"
 
-# Worker secret (Settings -> Variables and Secrets, type Secret): HETZNER_TOKEN
+# Worker secrets (Settings -> Variables and Secrets, type Secret):
+#   HETZNER_TOKEN, CF_DNS_TOKEN, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+# Optional worker var: HETZNER_SSH_KEY (name of an SSH key in Hetzner)
 # Build secret (Settings -> Build -> Variables): DISCORD_BOT_TOKEN

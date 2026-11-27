@@ -8,7 +8,13 @@ const { DISCORD_APP_ID: app, DISCORD_GUILD_ID: guild, DISCORD_BOT_TOKEN: token }
 if (!app) throw new Error("DISCORD_APP_ID is missing (wrangler.toml [vars])");
 if (!token) throw new Error("DISCORD_BOT_TOKEN is missing (Cloudflare: Settings -> Build -> Variables and secrets)");
 
-const sub = (name, description) => ({ type: 1, name, description });
+const sub = (name, description, options) => ({ type: 1, name, description, options });
+const choice = (name, description, choices) => ({
+  type: 3, // string
+  name,
+  description,
+  choices: Object.entries(choices).map(([name, value]) => ({ name, value })),
+});
 
 const commands = [
   {
@@ -17,7 +23,10 @@ const commands = [
     contexts: [0], // guild only
     default_member_permissions: "0", // admins only; remove to allow everyone
     options: [
-      sub("start", "Start the server"),
+      sub("start", "Start the server", [
+        choice("type", "Hetzner server type (default cx23)", { cx23: "cx23", cpx12: "cpx12" }),
+        choice("location", "Location (default helsinki)", { helsinki: "hel1", nuremberg: "nbg1", falkenstein: "fsn1" }),
+      ]),
       sub("stop", "Stop the server"),
       sub("status", "Show server status"),
     ],

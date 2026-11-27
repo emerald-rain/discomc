@@ -1,0 +1,112 @@
+#cloud-config
+# First boot of the Minecraft server. The Worker sends this as Hetzner user_data
+# and fills the /etc/mc.env placeholder below (base64: R2 credentials, backup key,
+# Discord message URL). Everything the server needs is in this file.
+
+package_update: true
+packages: [docker.io, docker-cli, docker-compose, zstd, rclone, btop, micro]
+
+# --- User and SSH: key-only login as malysh (uid 1000, same as itzg) ---------
+
+users:
+  - name: malysh
+    groups: [docker]
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: "ALL=(ALL:ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFV3k2PXPkmuK0d1rBJSbeHNQjeSnOwWAYYfEjgRJVTN malysh-laptop
+
+ssh_pwauth: false
+disable_root: true
+
+swap:
+  filename: /swapfile
+  size: 2G
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-hardening.conf # "10-": sshd uses the first value it finds
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      AllowUsers malysh
+
+  - path: /etc/sysctl.d/99-swappiness.conf
+    content: vm.swappiness=10
+
+  - path: /etc/mc.env
+    permissions: "0600"
+    encoding: b64
+    content: __MC_ENV__
+
+  # Restore the world from R2, start Minecraft, report to Discord.
+  - path: /usr/local/bin/mc-start
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      set -a; . /etc/mc.env; set +a
+      say() { curl -sS -X PATCH -H 'content-type: application/json' -d "{\"content\":\"$1\"}" "$DISCORD_MESSAGE" >/dev/null || true; }
+      trap 'say "Error: start failed at line $LINENO (journalctl -u cloud-final)"' ERR
+
+      cd /srv/mc
+      mkdir -p data config
+      [ -z "$BACKUP" ] || rclone cat "r2:mc-world/$BACKUP" | zstd -d | tar -x -C data
+      rm -f data/world/session.lock
+      chown -R 1000:1000 .
+      docker compose up -d
+
+      for _ in $(seq 180); do # 15 min
+        [ "$(docker inspect -f '{{.State.Health.Status}}' mc-server)" = healthy ] && { say "Online: mc.knash.party"; exit 0; }
+        sleep 5
+      done
+      say "Error: Minecraft is not healthy after 15 min"
+      exit 1
+
+  - path: /srv/mc/docker-compose.yml
+    content: |
+      services:
+        mc-server:
+          container_name: mc-server
+          image: itzg/minecraft-server:latest
+          ports: ["25565:25565"]
+          restart: unless-stopped
+          stop_grace_period: 60s
+          volumes:
+            - ./data:/data
+            - ./config:/config:ro # mod configs, empty for now
+          environment:
+            TYPE: "FABRIC"
+            VERSION: "26.3"
+            MEMORY: "80%"
+            EULA: "TRUE"
+
+            OPS: |
+              sir_malysh07
+            WHITELIST: |
+              sir_malysh07
+              sir_malysh05
+              _SUDR_
+            EXISTING_OPS_FILE: "SYNCHRONIZE"
+            EXISTING_WHITELIST_FILE: "SYNCHRONIZE"
+
+            DIFFICULTY: "hard"
+            VIEW_DISTANCE: "12"
+            SIMULATION_DISTANCE: "6"
+            SPAWN_PROTECTION: "0"
+            SYNC_CHUNK_WRITES: "false"
+            MOTD: "§6KLADNASH IMMORTAL §8v:2§r\n§5Lovely❣ §6☀§r Vanilla+§8  v:26.3"
+
+            MODRINTH_PROJECTS: |
+              fabric-api:0.165.0+26.3
+              lithium:mc26.3-0.26.3-fabric
+              ferrite-core:9.0.0-fabric
+              chunky:1.5.3
+              quickleafdecay:1.0.0
+              nocroptrample:1.6-26.3
+
+runcmd:
+  - [systemctl, reload, ssh]
+  - [sysctl, --system]
+  - [/usr/local/bin/mc-start]

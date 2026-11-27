@@ -1,12 +1,15 @@
 // Discord interactions endpoint (Cloudflare Worker, no libraries).
 // Every command replies "thinking..." at once (Discord allows 3s), then does its work
-// in ctx.waitUntil and edits that reply.
+// in ctx.waitUntil and edits that reply. Long work runs on the server itself.
 
-const json = (data, status = 200) => Response.json(data, { status });
+import cloudInit from "../server/cloud-init.yaml";
+
 const LABEL = "app=discomc"; // Hetzner label of our server
+const DOMAIN = "mc.knash.party";
+const BACKUPS = "backups/";
 
 const commands = {
-  start: async () => "Starting... (not wired yet)",
+  start,
   stop: async () => "Stopping... (not wired yet)",
   status,
 };
@@ -23,20 +26,59 @@ export default {
     );
     if (!ok) return new Response("bad signature", { status: 401 });
 
-    const { type, data, token } = JSON.parse(body);
-    if (type === 1) return json({ type: 1 }); // PING -> PONG
+    const interaction = JSON.parse(body);
+    if (interaction.type === 1) return Response.json({ type: 1 }); // PING -> PONG
 
-    const cmd = type === 2 && commands[data.options?.[0]?.name]; // /mc <sub>
-    if (!cmd) return json({ type: 4, data: { content: "Unknown command.", flags: 64 } });
+    const sub = interaction.type === 2 && interaction.data.options?.[0]; // /mc <sub>
+    const cmd = sub && commands[sub.name];
+    if (!cmd) return Response.json({ type: 4, data: { content: "Unknown command.", flags: 64 } });
 
+    const opts = Object.fromEntries((sub.options ?? []).map((o) => [o.name, o.value]));
+    const url = messageUrl(env, interaction.token);
     ctx.waitUntil(
-      cmd(env)
+      cmd(env, opts, url)
         .catch((e) => `Error: ${e.message}`)
-        .then((content) => reply(env, token, content)),
+        .then((content) => edit(url, content)),
     );
-    return json({ type: 5 }); // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+    return Response.json({ type: 5 }); // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
   },
 };
+
+// --- Commands ---------------------------------------------------------------
+
+async function start(env, { type = "cx23", location = "hel1" }, url) {
+  const { servers } = await hetzner(env, `/servers?label_selector=${LABEL}`);
+  if (servers.length) return `Server already exists (${servers[0].status}).`;
+
+  const backup = latest(await listAll(env.WORLD, BACKUPS));
+  const mcEnv = [
+    `BACKUP=${backup?.key ?? ""}`,
+    `DISCORD_MESSAGE=${url}`, // the server edits this reply when Minecraft is up
+    "RCLONE_CONFIG_R2_TYPE=s3",
+    "RCLONE_CONFIG_R2_PROVIDER=Cloudflare",
+    `RCLONE_CONFIG_R2_ACCESS_KEY_ID=${env.R2_ACCESS_KEY_ID}`,
+    `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY=${env.R2_SECRET_ACCESS_KEY}`,
+    `RCLONE_CONFIG_R2_ENDPOINT=https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    "RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true",
+  ].join("\n");
+
+  const { server } = await hetzner(env, "/servers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "mc",
+      server_type: type,
+      location,
+      image: "debian-13",
+      labels: { app: "discomc" },
+      ssh_keys: env.HETZNER_SSH_KEY ? [env.HETZNER_SSH_KEY] : [], // a key here avoids the root password email
+      user_data: cloudInit.replace("__MC_ENV__", b64(mcEnv + "\n")),
+    }),
+  });
+  await setDns(env, server.public_net.ipv4.ip);
+
+  const world = backup ? `restoring \`${backup.key}\` (${size(backup.size)})` : "fresh world";
+  return `Starting ${type} in ${location}, ${world}... This message updates when the server is online.`;
+}
 
 async function status(env) {
   const [{ servers }, objects] = await Promise.all([
@@ -53,6 +95,7 @@ async function status(env) {
 
   const used = objects.reduce((sum, o) => sum + o.size, 0);
   const backups = objects
+    .filter((o) => o.key.startsWith(BACKUPS))
     .sort((a, b) => b.uploaded - a.uploaded)
     .slice(0, 10)
     .map((o) => `• \`${o.key}\` — ${size(o.size)} — ${o.uploaded.toISOString().slice(0, 16).replace("T", " ")}`);
@@ -64,36 +107,58 @@ async function status(env) {
   ].join("\n");
 }
 
-// Edit the deferred "thinking..." reply.
-const reply = (env, token, content) =>
-  fetch(`https://discord.com/api/v10/webhooks/${env.DISCORD_APP_ID}/${token}/messages/@original`, {
+// --- APIs -------------------------------------------------------------------
+
+const messageUrl = (env, token) =>
+  `https://discord.com/api/v10/webhooks/${env.DISCORD_APP_ID}/${token}/messages/@original`;
+
+const edit = (url, content) =>
+  fetch(url, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ content: content.slice(0, 2000) }),
   });
 
-async function hetzner(env, path, init = {}) {
-  const res = await fetch(`https://api.hetzner.cloud/v1${path}`, {
+async function api(url, token, init = {}) {
+  const res = await fetch(url, {
     ...init,
-    headers: { authorization: `Bearer ${env.HETZNER_TOKEN}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
   });
   const body = await res.json();
-  if (!res.ok) throw new Error(`Hetzner ${res.status}: ${body.error?.message}`);
+  if (!res.ok) {
+    const msg = body.error?.message ?? body.errors?.[0]?.message ?? "unknown error";
+    throw new Error(`${new URL(url).hostname} ${res.status}: ${msg}`);
+  }
   return body;
 }
 
-async function listAll(bucket) {
+const hetzner = (env, path, init) => api(`https://api.hetzner.cloud/v1${path}`, env.HETZNER_TOKEN, init);
+
+// Point DOMAIN at ip (DNS only: Cloudflare's proxy does not carry Minecraft traffic).
+async function setDns(env, ip) {
+  const base = `https://api.cloudflare.com/client/v4/zones/${env.CF_ZONE_ID}/dns_records`;
+  const { result } = await api(`${base}?type=A&name=${DOMAIN}`, env.CF_DNS_TOKEN);
+  const record = JSON.stringify({ type: "A", name: DOMAIN, content: ip, ttl: 60, proxied: false });
+  const id = result[0]?.id;
+  await api(id ? `${base}/${id}` : base, env.CF_DNS_TOKEN, { method: id ? "PUT" : "POST", body: record });
+}
+
+async function listAll(bucket, prefix) {
   const out = [];
   let cursor;
   do {
-    const page = await bucket.list({ cursor });
+    const page = await bucket.list({ prefix, cursor });
     out.push(...page.objects);
     cursor = page.truncated && page.cursor;
   } while (cursor);
   return out;
 }
 
+// --- Helpers ----------------------------------------------------------------
+
+const latest = (objects) => objects.sort((a, b) => b.uploaded - a.uploaded)[0];
 const size = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${(b / 1e6).toFixed(1)} MB`);
+const b64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 
 async function verify(keyHex, sigHex, message) {
   if (!keyHex || !sigHex) return false;

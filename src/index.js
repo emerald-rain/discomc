@@ -213,10 +213,22 @@ async function refresh(env) {
   await put(env, LAST, body);
 }
 
-// Panel look (mockup: discohook). Emoji can be custom: { name, id }.
+// Panel look (mockup: discohook).
 const NAME = "Шузик";
 const COLORS = { offline: 0x3498db, starting: 0xf1c40f, online: 0x2ecc71, stopping: 0xf1c40f, problem: 0xe74c3c };
 const R2_FREE = "10 GB";
+// Animated application emojis (Developer Portal -> Emojis).
+const emoji = (name, id) => ({ name, id, animated: true });
+const E = {
+  wakeup: emoji("shuzik_wakeup", "1576019403714330635"),
+  backup: emoji("shuzik_backup", "1576019391579955210"),
+  map: emoji("shuzik_map", "1576019398110486628"),
+  waking: emoji("shuzik_waking", "1576019420298346606"),
+  save: emoji("shuzik_save", "1576019399939199206"),
+  idle: emoji("shuzik_idle", "1576019395661275287"),
+  sleeping: emoji("shuzik_sleeping", "1576019401986154647"),
+  delete: emoji("shuzik_delete", "1576019393299746927"),
+};
 const LOGO = [
   "▐▌▗▞▘▐▌   ▗▞▀▚▖▐▛▀▚▖▐▙▖ ▐▌▗▞▀▚▖▗▞▀▀▘▐▌ ▐▌",
   "▐▛▚▖ ▐▌   ▐▛▀▜▌▐▌ ▐▌▐▌▝▚▟▌▐▛▀▜▌ ▝▀▚▖▐▛▀▜▌",
@@ -236,31 +248,31 @@ async function view(env) {
   const backups = objects.filter((o) => o.key.startsWith(BACKUPS)).sort((a, b) => b.uploaded - a.uploaded);
   const used = objects.reduce((sum, o) => sum + o.size, 0);
 
-  const map = link("Live map", "🗺️", `https://${DOMAIN}`);
+  const map = link("Live map", E.map, `https://${DOMAIN}`);
   let state, problem, buttons;
   const fail = (text) => {
     [state, problem] = ["problem", text];
     buttons = [
-      ...(s.status === "running" ? [button("Stop and save", "⏹️", 4, "stop")] : []),
-      button("Delete without saving", "🗑️", 2, "remove"),
+      ...(s.status === "running" ? [button("Stop and save", E.save, 4, "stop")] : []),
+      button("Delete without saving", E.delete, 2, "remove"),
     ];
   };
 
   if (!s) {
     state = "offline";
-    buttons = [button(`Wake up ${NAME}`, "🌠", 3, "start"), map, link("Backup", "🫳", `https://${DOMAIN}`)];
+    buttons = [button(`Wake up ${NAME}`, E.wakeup, 3, "start"), map, link("Backup", E.backup, `https://${DOMAIN}`)];
   } else if (s.status === "off" && !pending) fail("Server is off, no new backup in R2. Server kept.");
   else if (pending || vm === "saving" || vm === "saved") {
     state = "stopping";
-    buttons = [button(`${NAME} falls asleep ...`, "💤", 1), map];
+    buttons = [button(`${NAME} falls asleep ...`, E.sleeping, 1), map];
   } else if (vm?.startsWith("error")) fail(vm.replace(/^error: */, ""));
   else if (s.status === "running" && vm === "online") {
     state = "online";
-    buttons = [button("Stop and save", "⏹️", 4, "stop"), map, button("Stop when idle", "⏳", 3)];
+    buttons = [button("Stop and save", E.save, 4, "stop"), map, button("Stop when idle", E.idle, 3)];
   } else if (Date.now() - Date.parse(s.created) > START_TIMEOUT) fail("Not online 20 min after start (no \"online\" report from the server).");
   else {
     state = "starting";
-    buttons = [button(`${NAME} wakes up ...`, "🌟", 1), map];
+    buttons = [button(`${NAME} wakes up ...`, E.waking, 1), map];
   }
 
   const seen = backups[0] ? utc(backups[0].uploaded) : "never";
@@ -280,9 +292,9 @@ async function view(env) {
 const text = (content) => ({ type: 10, content });
 // A button without an action (custom_id) is drawn disabled.
 const button = (label, emoji, style, custom_id) =>
-  ({ type: 2, style, label, emoji: { name: emoji }, custom_id: custom_id ?? label, disabled: !custom_id });
+  ({ type: 2, style, label, emoji, custom_id: custom_id ?? label, disabled: !custom_id });
 // Link buttons are disabled for now (live map and backup download are not built yet).
-const link = (label, emoji, url) => ({ type: 2, style: 5, label, emoji: { name: emoji }, url, disabled: true });
+const link = (label, emoji, url) => ({ type: 2, style: 5, label, emoji, url, disabled: true });
 const pad = (s, n) => s.padEnd(n, "\u00a0"); // no-break spaces are not collapsed
 const utc = (ms) => new Date(ms).toISOString().replace(/^(\d+)-(\d+)-(\d+)T(\d+:\d+).*/, "$3.$2.$1 $4 UTC");
 

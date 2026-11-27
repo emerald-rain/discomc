@@ -274,9 +274,9 @@ async function view(env, origin) {
   const chips = [pad(state.toUpperCase(), 8), `R2: ${(used / 1e9).toFixed(2)} GB / ${R2_FREE}`, `LAST TIME ONLINE: ${seen}`];
   const warn = [problem, note].filter(Boolean).map((t) => `⚠️ ${t}`).join("\n");
   const parts = [
+    image && origin && { type: 12, items: [{ media: { url: `${origin}/panel.jpg?v=${image.etag}` } }] },
     text(chips.map((c) => `\` ${c} \``).join(" ")),
     warn && text(warn),
-    image && origin && { type: 12, items: [{ media: { url: `${origin}/panel.jpg?v=${image.etag}` } }] },
     { type: 1, components: buttons },
   ].filter(Boolean);
   return { flags: V2, components: [{ type: 17, accent_color: COLORS[state], components: parts }] };

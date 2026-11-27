@@ -97,6 +97,7 @@ async function start(env, { origin }) {
     `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY=${env.R2_SECRET_ACCESS_KEY}`,
     `RCLONE_CONFIG_R2_ENDPOINT=https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
     "RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true",
+    "RCLONE_CONFIG_R2_NO_HEAD=true", // R2 has no HEAD ?versionId=, which rclone runs after small uploads
   ].join("\n");
 
   const { server } = await hetzner(env, "/servers", {

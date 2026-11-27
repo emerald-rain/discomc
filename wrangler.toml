@@ -1,0 +1,6 @@
+name = "discomc"
+main = "src/index.js"
+compatibility_date = "2025-11-01"
+
+# DISCORD_PUBLIC_KEY is set as a secret:
+#   wrangler secret put DISCORD_PUBLIC_KEY

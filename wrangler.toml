@@ -2,5 +2,10 @@ name = "discomc"
 main = "src/index.js"
 compatibility_date = "2025-11-01"
 
-# DISCORD_PUBLIC_KEY is set as a secret:
-#   wrangler secret put DISCORD_PUBLIC_KEY
+# Not secrets. Also read by scripts/register.mjs.
+[vars]
+DISCORD_APP_ID = "1442874755932884992"
+DISCORD_GUILD_ID = "1058005724199923763"
+
+# Secrets (dashboard or `wrangler secret put`): DISCORD_PUBLIC_KEY
+# Build secret (Settings -> Build -> Variables): DISCORD_BOT_TOKEN

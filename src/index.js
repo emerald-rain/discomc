@@ -43,10 +43,10 @@ export default {
     return Response.json({ type: 5 }); // DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
   },
 
-  // Every minute: finish a pending /mc stop once the server has powered off.
+  // Every minute: finish a server that has powered off (backed up -> delete it).
   async scheduled(_, env) {
     const obj = await env.WORLD.get(STOP);
-    if (!obj) return;
+    if (!obj) return finishSilently(env);
     const { url, server, at } = await obj.json();
     console.log(`pending stop: server ${server}, ${Math.round((Date.now() - at) / 1000)}s ago`);
     const done = (content) => Promise.all([edit(url, content), env.WORLD.delete(STOP)]);
@@ -106,6 +106,14 @@ async function stop(env, _, url) {
   await env.WORLD.put(STOP, JSON.stringify({ url, server: s.id, at: Date.now() }));
   if (s.status !== "off") await hetzner(env, `/servers/${s.id}/actions/shutdown`, { method: "POST" });
   return "Stopping: saving the world to R2... This message updates when done.";
+}
+
+// No /mc stop pending, but the server powered itself off (idle timer, Hetzner panel).
+// A backup counts if it is newer than the server.
+async function finishSilently(env) {
+  const { servers } = await hetzner(env, `/servers?label_selector=${LABEL}`);
+  const s = servers.find((x) => x.status === "off");
+  if (s) console.log("auto stop:", await finishStop(env, s.id, Date.parse(s.created)));
 }
 
 // Returns the final message, or nothing to check again next minute.

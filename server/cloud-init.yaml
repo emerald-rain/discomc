@@ -99,6 +99,38 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
+  # Power off after 10 min without players, only at minutes 50-53 of the paid Hetzner hour
+  # (counted from boot), so backup + delete finish before the next hour is billed.
+  # An unreachable server counts as active.
+  - path: /usr/local/bin/mc-idle
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      last=/run/mc-last-active # tmpfs: reset on boot, so 10 min grace after start
+      online=$(docker exec mc-server mc-monitor status 2>/dev/null | grep -o 'online=[0-9]*' | cut -d= -f2)
+      if [ "${online:-x}" != 0 ] || [ ! -e "$last" ]; then touch "$last"; exit 0; fi
+
+      idle=$(( $(date +%s) - $(stat -c %Y "$last") ))
+      minute=$(( $(cut -d. -f1 /proc/uptime) / 60 % 60 ))
+      if [ "$idle" -ge 600 ] && [ "$minute" -ge 50 ] && [ "$minute" -le 53 ]; then
+        echo "no players for $((idle / 60)) min, minute $minute of the hour: powering off"
+        systemctl poweroff
+      fi
+
+  - path: /etc/systemd/system/mc-idle.service
+    content: |
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/mc-idle
+
+  - path: /etc/systemd/system/mc-idle.timer
+    content: |
+      [Timer]
+      OnCalendar=minutely
+
+      [Install]
+      WantedBy=timers.target
+
   - path: /srv/mc/docker-compose.yml # server/docker-compose.yml
     encoding: b64
     content: __COMPOSE__
@@ -106,5 +138,5 @@ write_files:
 runcmd:
   - [systemctl, reload, ssh]
   - [sysctl, --system]
-  - [systemctl, enable, --now, mc-backup]
+  - [systemctl, enable, --now, mc-backup, mc-idle.timer]
   - [/usr/local/bin/mc-start]
